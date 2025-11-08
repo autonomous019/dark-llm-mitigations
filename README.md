@@ -411,6 +411,12 @@ This bibliography was compiled to accompany an executive intelligence brief on D
 
 *Prepared for defensive use by the requesting user (CISO / law enforcement context).*
 
+--
+
+This repo is a collaboration between Michael McCarron and Chatgpt5.o:
+
+ChatGPT (OpenAI). (2025, November 7). Advisory discussion on emergent behavior, dark LLMs, and preventive security measures. OpenAI ChatGPT. https://chat.openai.com/
+
 
 
 
