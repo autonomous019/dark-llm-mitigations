@@ -277,6 +277,317 @@ The objective is *not* to halt innovation but to ensure that emergent intelligen
 
 ---
 
+
+# 🧠 Detecting and Preventing GPU Abuse in Cloud Environments
+
+**Audience:** CISOs, SOC teams, DFIR analysts, cloud security engineers, and law enforcement cyber units.  
+**Purpose:** Provide a defensive framework for detecting and mitigating illicit GPU usage for unauthorized AI model training or “GPU botnet” activity.  
+
+---
+
+## 1️⃣ Threat Model — What GPU Abuse Looks Like
+
+Attackers increasingly attempt to hijack GPU resources (either cloud or on-prem) for high-compute tasks such as:
+- Unauthorized **LLM training or fine-tuning**
+- **Crypto mining** disguised as ML workloads
+- **Data exfiltration** using ML frameworks
+- **Malware hosting** within containerized GPU jobs
+
+Typical vectors:
+- Compromised API keys or IAM roles  
+- Misconfigured Kubernetes clusters with exposed GPU nodes  
+- Stolen cloud credentials used to spin up GPU instances  
+- Compromised developer workstations repurposed for distributed ML workloads  
+
+This README provides *detection and response* guidance only — **no offensive or exploit detail.**
+
+---
+
+## 2️⃣ Best Detectors — Cloud, Host, and Network Telemetry
+
+### ☁️ Cloud Provider / Billing Signals
+- **Billing spikes** for GPU instance families (A100, H100, MI300).  
+- **Instance creation anomalies** — GPUs spun up in new regions or by non-ML accounts.  
+- **Ephemeral credential usage** with high-value IAM actions.  
+- **Interactive console sessions** in accounts not normally accessed manually.  
+- **Correlated API calls:** `RunInstances`, `CreateInstance`, `CreateRole` outside maintenance windows.
+
+### 💻 Host / Container Indicators
+- Sustained **GPU utilization >70%** for >30 minutes on non-ML hosts.  
+- **Long-running Python processes** invoking ML frameworks (`torch`, `tensorflow`, `transformers`).  
+- Files or folders named `checkpoints/`, `.pt`, `.bin`, or `.ckpt`.  
+- Unexpected **ML container images** (e.g., `pytorch`, `huggingface/transformers`, `tensorflow`).  
+- **Environment variables** exposing GPUs (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`).  
+- Kubernetes pods requesting `nvidia.com/gpu` resources in namespaces not tagged for ML.
+
+### 🌐 Network / Storage
+- Multi-GB uploads to external storage (S3, Azure Blob, GCS).  
+- Data transfers to **HuggingFace**, **private Git hosts**, or **unknown storage endpoints**.  
+- Creation of new storage buckets followed by heavy outbound transfers.  
+- Traffic to model sharing domains or cloud buckets not listed in allow-lists.  
+
+---
+
+## 3️⃣ SOC Hunt Ideas (Non-Actionable Examples)
+
+> These examples describe **detection concepts** only; translate to Splunk, Elastic, or your SIEM syntax.
+
+- **Cloud audit log hunt:** find `CreateInstance` / `RunInstances` events for GPU instance types by users outside ML teams.  
+- **Billing anomaly:** alert if GPU spend > 3× baseline in any 24-hour period.  
+- **Image detection:** flag Docker/K8s images containing ML frameworks where none are expected.  
+- **File artifact search:** hunt for `.pt`, `.bin`, `.ckpt` files on non-ML servers.  
+- **Process behavior:** detect `python` processes with both network activity and sustained GPU load.  
+- **Egress watch:** alert when uploads >1 GB occur from GPU instances to external endpoints.  
+- **GPU metric anomalies:** sustained high GPU temperature or power draw outside scheduled workloads.
+
+---
+
+## 4️⃣ Forensics & Evidence Preservation
+
+If GPU abuse is suspected:
+
+1. **Snapshot cloud resources:** capture VM, container, and disk states.  
+2. **Preserve audit logs:** CloudTrail, Audit Logs, Kubernetes API logs.  
+3. **Memory snapshot:** capture running process space if allowed.  
+4. **Collect filesystem artifacts:**  
+   - `/var/log/` and `/home/`  
+   - ML artifacts (`*.pt`, `trainer_state.json`, `opt_state.pt`)  
+   - `requirements.txt`, environment files  
+5. **List GPU-bound processes:** `nvidia-smi` or equivalent; note PID mappings.  
+6. **Network flow capture:** outbound endpoints, storage URLs, IPs.  
+7. **Container evidence:** list running images, hashes, and registries used.  
+8. **Hash model artifacts** for later correlation with known leaks.  
+9. **Preserve chain of custody** if law enforcement involvement is expected.
+
+---
+
+## 5️⃣ Response Checklist
+
+| Step | Action | Goal |
+|------|--------|------|
+| 1 | **Isolate** suspect nodes | Prevent further misuse |
+| 2 | **Preserve** evidence before reboot | For forensics |
+| 3 | **Revoke/rotate** credentials | Stop recurring access |
+| 4 | **Block egress** to malicious endpoints | Contain data exfil |
+| 5 | **Search for lateral movement** | Identify additional compromised accounts |
+| 6 | **Engage cloud provider** abuse channels | Obtain deeper logs |
+| 7 | **Perform forensic review** of artifacts | Attribute activity |
+| 8 | **Rebuild / patch** compromised systems | Restore clean state |
+| 9 | **Coordinate** with law enforcement & CERTs | Legal and joint mitigation |
+
+---
+
+## 6️⃣ Prevention Controls
+
+### 🔧 Quick Wins
+- **Enable billing alerts** for GPU families and quota increases.  
+- **Require instance tagging** (owner, purpose) for all GPU provisioning.  
+- **MFA and just-in-time access** for IAM and console logins.  
+- **Auto-block untagged GPU instances.**  
+- **Restrict public S3 buckets** and enable encryption by default.  
+
+### ⚙️ Medium-Term
+- **Whitelisted container images** with GPU access only for approved registries.  
+- **GPU quota limits** per team with ticketed approvals.  
+- **Runtime detection** via EDR / Falco / Sysmon.  
+- **Automated anomaly detection** on GPU metrics and egress volume.
+
+### 🧱 Strategic
+- **Centralize compute procurement** with identity tracking.  
+- **Monitor GPU orders and hardware inventory.**  
+- **Collaborate with providers** on compute-abuse intelligence feeds.  
+- **Implement compute transparency** reporting for regulators.
+
+---
+
+## 7️⃣ Indicators of Compromise (IOC) Correlation
+
+| Indicator | Description | Risk |
+|------------|--------------|------|
+| GPU instance + large data upload | Sudden training or exfil attempt | 🔴 High |
+| GPU process + model files detected | Unauthorized model training | 🔴 High |
+| Tagged ML workload, valid owner | Legitimate usage | 🟢 Low |
+
+---
+
+## 8️⃣ Detection Rules You Can Deploy Now
+
+- **Cloud rule:** alert if `instanceType ∈ GPU_FAMILY` and creator ∉ ML allowlist.  
+- **Billing rule:** alert if `gpu_hours` > baseline × 4.  
+- **File rule:** scan for `.pt`, `.ckpt`, `checkpoint/` directories.  
+- **Process rule:** alert on `python` using `torch` or `tensorflow` on non-ML hosts.  
+- **Network rule:** alert on outbound upload > 1 GB to non-approved endpoints.
+
+---
+
+## 9️⃣ Collaboration & Escalation
+
+- **Cloud Providers:** contact abuse or incident-response teams for deeper telemetry.  
+- **Exchanges / AML Partners:** trace ransomware or laundering attempts tied to cloud spend.  
+- **Peer Organizations:** share indicators via ISAC / CERT networks.  
+- **Law Enforcement:** provide preserved logs, hashes, and wallet traces.
+
+---
+
+## 🔟 Executive Summary for CISOs
+
+1. Turn on **GPU quota and billing alerts** for all accounts.  
+2. Require **instance tagging** for GPU provisioning.  
+3. Deploy **runtime GPU utilization monitoring** (EDR + cloud metrics).  
+4. Regularly **hunt for model artifacts** (`.pt`, `.ckpt`) across storage.  
+5. Maintain a **GPU Forensics & Escalation Plan** shared with legal and DFIR teams.  
+
+---
+
+
+# 🔍 GPU Forensics & Incident Response Checklist
+
+**Purpose:**  
+Provide a structured, defensible checklist for investigating suspected GPU misuse — including unauthorized AI model training, cryptomining, or data exfiltration via GPU workloads.  
+Designed for DFIR, SOC, and law enforcement teams operating in cloud or hybrid environments.
+
+---
+
+## 🧠 1. Pre-Investigation Preparation
+
+| Task | Description | Responsible |
+|------|--------------|--------------|
+| 🔸 Confirm authorization | Ensure you have incident-response or legal approval to collect cloud evidence. | Legal / IR Lead |
+| 🔸 Identify scope | Determine whether incident involves cloud, on-prem, or hybrid GPU infrastructure. | Incident Commander |
+| 🔸 Assign roles | Define leads for cloud forensics, host forensics, network analysis, and evidence management. | IR Manager |
+| 🔸 Preserve chain of custody | Document each evidence collection step. Use immutable storage for artifacts. | All Teams |
+
+---
+
+## ☁️ 2. Cloud Evidence Collection
+
+| Artifact | Description / Command | Notes |
+|-----------|----------------------|-------|
+| **Audit Logs** | AWS CloudTrail, Azure Activity Logs, GCP Audit — filter for `RunInstances`, `CreateInstance`, `CreateRole`, `StartVM` events. | Establish provisioning timeline. |
+| **Billing Records** | Capture billing & GPU-hour data for the time window. | Identify anomalies / misuse cost. |
+| **Instance Metadata** | Collect instance details: type, region, tags, image ID, user data. | Confirms GPU family (A100/H100/etc). |
+| **IAM Activity** | Download recent IAM changes, token creation events, MFA usage. | Tracks compromised creds. |
+| **Snapshots** | Create disk snapshots or machine images for forensic duplication. | Verify before shutdown. |
+| **Network Flow Logs** | Export VPC Flow Logs or equivalent. | Detect exfil endpoints. |
+
+---
+
+## 💻 3. Host & Container Forensics
+
+| Artifact | Command / Collection Method | Purpose |
+|-----------|----------------------------|----------|
+| **Process Listing** | `ps aux`, `top`, or `nvidia-smi -l 1` | Identify long-running GPU-bound processes. |
+| **Running Containers** | `docker ps -a` / `kubectl get pods -A` | Detect ML framework containers. |
+| **Container Images** | `docker images` / `ctr images ls` | Hash and store image metadata. |
+| **Python Environments** | `pip freeze`, `conda list` | Detect `torch`, `tensorflow`, `transformers` installs. |
+| **ML Artifacts** | Search for `.pt`, `.bin`, `.ckpt`, `trainer_state.json`. | Proves model training occurred. |
+| **User Accounts & SSH Keys** | `/etc/passwd`, `~/.ssh/authorized_keys` | Identify unauthorized users. |
+| **Cron / Scheduled Jobs** | `crontab -l` / `/etc/cron*` | Detect persistence or auto-start tasks. |
+| **Logs** | `/var/log/auth.log`, `/var/log/syslog`, container logs. | Identify timeline and commands used. |
+
+---
+
+## 🧩 4. GPU Hardware & Utilization Artifacts
+
+| Artifact | Command / Tool | Insight |
+|-----------|----------------|---------|
+| **GPU process mapping** | `nvidia-smi pmon -c 1` | Which PID is consuming GPU cycles. |
+| **GPU memory snapshot** | `nvidia-smi -q -d MEMORY` | Confirms VRAM use / workload intensity. |
+| **Driver & firmware info** | `nvidia-smi -q -d DRIVER,FAN,POWER` | Confirms driver integrity and versions. |
+| **GPU kernel logs** | `dmesg | grep -i nvidia` | Detects driver crashes or injections. |
+| **Performance metrics** | Cloud metrics (CloudWatch, Stackdriver) | Long-term utilization graphs. |
+
+---
+
+## 🌐 5. Network & Storage Investigation
+
+| Artifact | Description | Purpose |
+|-----------|-------------|----------|
+| **Outbound endpoints** | Correlate destination IPs with threat intel. | Detect data exfil or remote control. |
+| **Data uploads** | Look for large (>1 GB) uploads to unknown storage buckets. | Confirms exfil / model sync. |
+| **Bucket enumeration** | `aws s3 ls`, `gsutil ls`, etc. | Identify attacker-created storage. |
+| **DNS / Proxy logs** | Resolve domains tied to ML-sharing or malware sites. | Contextual attribution. |
+| **PCAP / Flow captures** | Collect short-term network traces. | Support timeline reconstruction. |
+
+---
+
+## 📦 6. Evidence Preservation & Integrity
+
+- Use **forensic imaging tools** (e.g., `dd`, `FTK Imager`, cloud snapshot APIs).  
+- Compute **SHA256 hashes** of all collected files and images.  
+- Store artifacts in **immutable evidence storage** (e.g., WORM S3 buckets).  
+- Maintain **evidence log** with timestamp, collector name, and tool used.  
+- Create a **case summary** including: instance IDs, IPs, IAM users, and observed behaviors.
+
+---
+
+## ⚙️ 7. Analysis Phase
+
+| Step | Analysis Goal |
+|------|----------------|
+| 1 | Reconstruct timeline of GPU provisioning → workload execution → teardown. |
+| 2 | Correlate IAM logs with API actions (who created what). |
+| 3 | Identify model files or datasets (possible intellectual property theft). |
+| 4 | Attribute activity to known malware / threat actor if signatures exist. |
+| 5 | Quantify compute hours used and potential cost impact. |
+| 6 | Determine persistence mechanisms (if any). |
+
+---
+
+## 🛡️ 8. Remediation
+
+1. Rotate all **IAM/API credentials** associated with the incident.  
+2. Delete or quarantine compromised GPU instances.  
+3. Patch or reimage affected workloads.  
+4. Enable **GPU quota and billing alerts** moving forward.  
+5. Apply stronger **KYC & tagging** for GPU resources.  
+6. Audit network egress controls and restrict external uploads.  
+7. Coordinate with **cloud provider abuse teams** for account review.  
+
+---
+
+## 🧾 9. Reporting & Disclosure
+
+| Output | Audience | Content |
+|---------|-----------|----------|
+| **Internal IR Report** | Executive / CISO | Summary, timeline, impact, next steps |
+| **Provider Incident Ticket** | Cloud vendor | Instance IDs, logs, artifacts |
+| **Regulatory / Legal Notice** | Legal / Compliance | Data exposure, PII indicators |
+| **Law Enforcement Packet** | CERT / FBI / Europol | Evidence log, forensic hashes, wallet traces |
+
+---
+
+## 🧭 10. Post-Incident Hardening
+
+- Enforce **GPU tagging and ownership policy.**  
+- Review **IAM least-privilege** and enforce MFA.  
+- Implement **real-time GPU utilization alerts.**  
+- Deploy **runtime EDR or anomaly detection** on GPU workloads.  
+- Document lessons learned and feed into continuous monitoring.  
+
+---
+
+### ⚖️ Disclaimer
+This checklist is for **defensive, forensic, and educational use only**.  
+It contains no exploit code or offensive procedures.  
+All steps must be performed under legal authority and corporate incident-response policy.
+
+---
+
+_Last updated: November 7 2025_  
+*Prepared collaboratively with ChatGPT (OpenAI, model GPT-5) for the `dark-llm-mitigations` repository.*
+
+
+### ⚖️ Disclaimer
+This document is for **defensive and educational use only**. It contains no exploit or offensive procedures.  
+All examples are intended for lawful security operations and incident-response planning.
+
+---
+
+_Last updated: November 7 2025_  
+*Authored collaboratively with ChatGPT (OpenAI, model GPT-5).*
+
+
 ## 📜 9. Summary
 - Efficiency gains (“densing law”) are reducing barriers to high‑capability model development.  
 - Preventive action now—through governance, transparency, and traceability—can meaningfully slow the emergence of unaligned or “dark” LLMs.  
